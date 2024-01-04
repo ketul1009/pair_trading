@@ -179,16 +179,16 @@ def get_trades(pairs, dataLocation, start, end, time="Date", export=None):
 
     return trades
 
-def linearRegression(df1, df2):
+def linearRegression(y, x):
 
     # Add a constant term to the independent variable
-    df2_with_const = sm.add_constant(df2)
+    x_with_const = sm.add_constant(x)
 
     # Ensure that both dataframes have the same index
-    df1.index = df2_with_const.index
+    y.index = x_with_const.index
 
     # Fit the linear regression model
-    model = sm.OLS(df1, df2_with_const).fit()
+    model = sm.OLS(y, x_with_const).fit()
 
     residuals = model.resid
 
@@ -198,7 +198,7 @@ def linearRegression(df1, df2):
     # Access Standard Error of Intercept
     standard_error_intercept = model.bse['const']
 
-    errorRatio = standard_error_intercept/std_dev_residuals
+    errorRatio = std_dev_residuals/standard_error_intercept
 
     result = adfuller(residuals)
 
@@ -220,28 +220,30 @@ def get_LR_pairs(symbols, dataLocation, start, end, time="Date", export=None):
 
             if(industry1 == industry2 and symbol1 != symbol2 and [symbol2, symbol1] not in pairs):
                 try:
-                    df1 = pd.read_csv(f"{dataLocation}/{symbol1}.csv")
-                    df2 = pd.read_csv(f"{dataLocation}/{symbol2}.csv")
+                    x = pd.read_csv(f"{dataLocation}/{symbol1}.csv")
+                    y = pd.read_csv(f"{dataLocation}/{symbol2}.csv")
 
                     # Filter data based on the date
-                    df1 = df1[pd.to_datetime(df1[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
-                    df2 = df2[pd.to_datetime(df2[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
+                    x = x[pd.to_datetime(x[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
+                    y = y[pd.to_datetime(y[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
 
                     # Extract the "Close" column
-                    df1 = df1["Close"]
-                    df2 = df2["Close"]
+                    x = x["Close"]
+                    y = y["Close"]
 
-                    results1, ratio1, p_value1 = linearRegression(df1, df2)
-                    results2, ratio2, p_value2 = linearRegression(df2, df1)
-                    if(symbol2=="SBIN" and symbol1=="AXISBANK"):
+                    results1, ratio1, p_value1 = linearRegression(y, x)
+                    results2, ratio2, p_value2 = linearRegression(x, y)
+                    
+                    if((symbol1=="BAJAJFINSV" and symbol2=="AXISBANK") or (symbol1=="AXISBANK" and symbol2=="BAJAJFINSV")):
                         print(ratio1, ratio2)
+
                     if(ratio1<=ratio2):
                         if(p_value1<0.05):
-                            pairs.append([industry1, symbol2, symbol1])
+                            pairs.append([industry1, symbol1, symbol2])
 
                     elif(ratio2<ratio1):
                         if(p_value2<0.05):
-                            pairs.append([industry2, symbol1, symbol2])
+                            pairs.append([industry2, symbol2, symbol1])
 
                 except Exception as e:
                     print(symbol1, symbol2, e)
@@ -255,21 +257,21 @@ def get_LR_pairs(symbols, dataLocation, start, end, time="Date", export=None):
 
     return pairs
 
-def get_std_err(df1, df2, time="Date"):
+def get_std_err(y, x, time="Date"):
 
     # Extract the "Close" column
-    df1 = df1["Close"]
-    df2 = df2["Close"]
+    x = x["Close"]
+    y = y["Close"]
 
-    df2_with_const = sm.add_constant(df2)
+    x_with_const = sm.add_constant(x)
 
     # Ensure that both dataframes have the same index
-    df1.index = df2_with_const.index
+    y.index = x_with_const.index
 
     # Fit the linear regression model
-    model = sm.OLS(df1, df2_with_const).fit()
+    model = sm.OLS(y, x_with_const).fit()
 
-    beta_value = model.params[df2_with_const.columns[1]]
+    beta_value = model.params[x_with_const.columns[1]]
 
     residuals = model.resid
 
@@ -284,24 +286,25 @@ def get_LR_trades(pairs, start, end, lookback, datalocation, time="Date", export
 
     temp = []
     for index, pair in pairs.iterrows():
-        df1 = pd.read_csv(f"{datalocation}/{pair[1]}.csv")
-        df2 = pd.read_csv(f"{datalocation}/{pair[2]}.csv")
+        x = pd.read_csv(f"{datalocation}/{pair[1]}.csv")
+        y = pd.read_csv(f"{datalocation}/{pair[2]}.csv")
 
-        startIndex = df1.index[pd.to_datetime(df1[time]) == pd.to_datetime(start)].to_list()[0] - lookback
-        endIndex = df1.index[pd.to_datetime(df1[time]) == pd.to_datetime(end)].to_list()[0] - lookback
+        startIndex = x.index[pd.to_datetime(x[time]) == pd.to_datetime(start)].to_list()[0] - lookback
+        endIndex = x.index[pd.to_datetime(x[time]) == pd.to_datetime(end)].to_list()[0] - lookback
         trades = []
         trade={}
         openTrade=False
         tradeType=""
-
-        for i in range(startIndex, endIndex):
-            new_df1 = df1[i:i+lookback]
-            new_df2 = df2[i:i+lookback]
-                
-            std_err = get_std_err(new_df1, new_df2, time=time)
+        for i in range(startIndex, endIndex+2):
+            new_x = x[i:i+lookback]
+            new_y = y[i:i+lookback]
+            
+            std_err = get_std_err(new_y, new_x, time=time)
+            if(pair[1]=="AXISBANK" and pair[2]=="BAJAJFINSV"):
+                print(new_x[time].iloc[len(new_x) - 1], std_err, i, i+lookback)
 
             if(std_err<=-2.5):
-                entry = pd.to_datetime(new_df1[time].iloc[len(new_df1) - 1])
+                entry = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
                 formatted_entry = entry.strftime('%Y-%m-%d %H:%M:%S')
 
                 trade["Stock X"] = pair[1]
@@ -312,7 +315,7 @@ def get_LR_trades(pairs, start, end, lookback, datalocation, time="Date", export
                 tradeType="l"
 
             elif(std_err>=2.5):
-                entry = pd.to_datetime(new_df1[time].iloc[len(new_df1) - 1])
+                entry = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
                 formatted_entry = entry.strftime('%Y-%m-%d %H:%M:%S')
 
                 trade["Stock X"] = pair[1]
@@ -324,7 +327,7 @@ def get_LR_trades(pairs, start, end, lookback, datalocation, time="Date", export
 
             elif(openTrade and tradeType=="s"):
                 if(std_err>=3 or std_err<=1):
-                    exit = pd.to_datetime(new_df1[time].iloc[len(new_df1) - 1])
+                    exit = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
                     formatted_exit = exit.strftime('%Y-%m-%d %H:%M:%S')
                     trade["exit"]=formatted_exit
                     openTrade=False
@@ -334,7 +337,7 @@ def get_LR_trades(pairs, start, end, lookback, datalocation, time="Date", export
                     
             elif(openTrade and tradeType=="l"):
                 if(std_err<=-3 or std_err>=-1):
-                    exit = pd.to_datetime(new_df1[time].iloc[len(new_df1) - 1])
+                    exit = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
                     formatted_exit = exit.strftime('%Y-%m-%d %H:%M:%S')
                     trade["exit"]=formatted_exit
                     openTrade=False
@@ -360,22 +363,22 @@ def get_tracker(pairs, datalocation, start, end, time="Date", export=None):
 
     tracker = []
     for pair in pairs.iterrows():
-        df1 = pd.read_csv(f"{datalocation}/{pair[1][1]}.csv")
-        df2 = pd.read_csv(f"{datalocation}/{pair[1][2]}.csv")
+        x = pd.read_csv(f"{datalocation}/{pair[1][1]}.csv")
+        y = pd.read_csv(f"{datalocation}/{pair[1][2]}.csv")
 
-        df1 = df1[pd.to_datetime(df1[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
-        df2 = df2[pd.to_datetime(df2[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
+        x = x[pd.to_datetime(x[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
+        y = y[pd.to_datetime(y[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
 
-        df1 = df1["Close"]
-        df2 = df2["Close"]
+        x = x["Close"]
+        y = y["Close"]
 
-        df1_with_const = sm.add_constant(df1)
+        x_with_const = sm.add_constant(x)
 
         # Ensure that both dataframes have the same index
-        df2.index = df1_with_const.index
+        y.index = x_with_const.index
 
         # Fit the linear regression model
-        model = sm.OLS(df2, df1_with_const).fit()
+        model = sm.OLS(y, x_with_const).fit()
 
         residuals = model.resid
         
@@ -389,7 +392,7 @@ def get_tracker(pairs, datalocation, start, end, time="Date", export=None):
 
         std_err = residuals.iloc[-1]/std_dev_residuals
         intercept = model.params['const']
-        beta = model.params[df1_with_const.columns[1]]
+        beta = model.params[x_with_const.columns[1]]
 
         tracker.append([pair[1][1], pair[1][2], intercept, beta, std_dev_residuals, std_err])
 
