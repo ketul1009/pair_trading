@@ -8,7 +8,7 @@ import numpy as np
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import adfuller
 from datetime import datetime, timedelta
-from tvDatafeed import TvDatafeed, Interval
+# from tvDatafeed import TvDatafeed, Interval
 
 import Exceptions
 
@@ -198,7 +198,9 @@ def linearRegression(y, x):
     # Access Standard Error of Intercept
     standard_error_intercept = model.bse['const']
 
-    errorRatio = std_dev_residuals/standard_error_intercept
+    errorRatio = standard_error_intercept/std_dev_residuals
+
+    std_err = residuals.iloc[-1]/std_dev_residuals
 
     result = adfuller(residuals)
 
@@ -206,168 +208,21 @@ def linearRegression(y, x):
     adf_statistic = result[0]
     p_value = result[1]
 
-    return model.summary(), errorRatio, p_value
+    # return model.summary(), errorRatio, p_value, std_err
+    return errorRatio, p_value
 
-def get_LR_pairs(symbols, dataLocation, start, end, time="Date", export=None):
-
-    pairs = []
-    for row1 in symbols.iterrows():
-        for row2 in symbols.iterrows():
-            industry1 = row1[1][1]
-            industry2 = row2[1][1]
-            symbol1 = row1[1][2]
-            symbol2 = row2[1][2]
-
-            if(industry1 == industry2 and symbol1 != symbol2 and [symbol2, symbol1] not in pairs):
-                try:
-                    x = pd.read_csv(f"{dataLocation}/{symbol1}.csv")
-                    y = pd.read_csv(f"{dataLocation}/{symbol2}.csv")
-
-                    # Filter data based on the date
-                    x = x[pd.to_datetime(x[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
-                    y = y[pd.to_datetime(y[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
-
-                    # Extract the "Close" column
-                    x = x["Close"]
-                    y = y["Close"]
-
-                    results1, ratio1, p_value1 = linearRegression(y, x)
-                    results2, ratio2, p_value2 = linearRegression(x, y)
-                    
-                    if((symbol1=="BAJAJFINSV" and symbol2=="AXISBANK") or (symbol1=="AXISBANK" and symbol2=="BAJAJFINSV")):
-                        print(ratio1, ratio2)
-
-                    if(ratio1<=ratio2):
-                        if(p_value1<0.05):
-                            pairs.append([industry1, symbol1, symbol2])
-
-                    elif(ratio2<ratio1):
-                        if(p_value2<0.05):
-                            pairs.append([industry2, symbol2, symbol1])
-
-                except Exception as e:
-                    print(symbol1, symbol2, e)
-
-
-    pairs = pd.DataFrame(pairs, columns=["Industry", "X", "Y"])
-    pairs = pairs.drop_duplicates()
-
-    if(export!=None):
-        pairs.to_csv(f"{export}", index=False)
-
-    return pairs
-
-def get_std_err(y, x, time="Date"):
-
-    # Extract the "Close" column
-    x = x["Close"]
-    y = y["Close"]
-
-    x_with_const = sm.add_constant(x)
-
-    # Ensure that both dataframes have the same index
-    y.index = x_with_const.index
-
-    # Fit the linear regression model
-    model = sm.OLS(y, x_with_const).fit()
-
-    beta_value = model.params[x_with_const.columns[1]]
-
-    residuals = model.resid
-
-    # Standard deviation of residuals
-    std_dev_residuals = residuals.std()
-
-    std_err = residuals.iloc[-1]/std_dev_residuals
-    
-    return std_err
-
-def get_LR_trades(pairs, start, end, lookback, datalocation, time="Date", export=None):
-
-    temp = []
-    for index, pair in pairs.iterrows():
-        x = pd.read_csv(f"{datalocation}/{pair[1]}.csv")
-        y = pd.read_csv(f"{datalocation}/{pair[2]}.csv")
-
-        startIndex = x.index[pd.to_datetime(x[time]) == pd.to_datetime(start)].to_list()[0] - lookback
-        endIndex = x.index[pd.to_datetime(x[time]) == pd.to_datetime(end)].to_list()[0] - lookback
-        trades = []
-        trade={}
-        openTrade=False
-        tradeType=""
-        for i in range(startIndex, endIndex+2):
-            new_x = x[i:i+lookback]
-            new_y = y[i:i+lookback]
-            
-            std_err = get_std_err(new_y, new_x, time=time)
-            if(pair[1]=="AXISBANK" and pair[2]=="BAJAJFINSV"):
-                print(new_x[time].iloc[len(new_x) - 1], std_err, i, i+lookback)
-
-            if(std_err<=-2.5):
-                entry = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
-                formatted_entry = entry.strftime('%Y-%m-%d %H:%M:%S')
-
-                trade["Stock X"] = pair[1]
-                trade["Stock Y"] = pair[2]
-                trade["type"]="long"
-                trade["entry"]=formatted_entry
-                openTrade=True
-                tradeType="l"
-
-            elif(std_err>=2.5):
-                entry = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
-                formatted_entry = entry.strftime('%Y-%m-%d %H:%M:%S')
-
-                trade["Stock X"] = pair[1]
-                trade["Stock Y"] = pair[2]
-                trade["type"]="short"
-                trade["entry"]=formatted_entry
-                openTrade=True
-                tradeType="s"
-
-            elif(openTrade and tradeType=="s"):
-                if(std_err>=3 or std_err<=1):
-                    exit = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
-                    formatted_exit = exit.strftime('%Y-%m-%d %H:%M:%S')
-                    trade["exit"]=formatted_exit
-                    openTrade=False
-                    tradeType=""
-                    trades.append(trade)
-                    trade={}
-                    
-            elif(openTrade and tradeType=="l"):
-                if(std_err<=-3 or std_err>=-1):
-                    exit = pd.to_datetime(new_x[time].iloc[len(new_x) - 1])
-                    formatted_exit = exit.strftime('%Y-%m-%d %H:%M:%S')
-                    trade["exit"]=formatted_exit
-                    openTrade=False
-                    tradeType=""
-                    trades.append(trade)
-                    trade={}
-        
-        if(len(trades)!=0):
-            temp.append(trades)
-
-    if(export!=None):
-        tradesExcel = []
-        for pair in temp:
-            for trade in pair:
-                tradesExcel.append(trade)
-
-        tradesExcel = pd.DataFrame(tradesExcel)
-        tradesExcel.to_csv(f"{export}", index=False)
-
-    return temp
-
-def get_tracker(pairs, datalocation, start, end, time="Date", export=None):
+def get_tracker(pairs, datalocation, start, lookback, time="Date", export=None):
 
     tracker = []
     for pair in pairs.iterrows():
         x = pd.read_csv(f"{datalocation}/{pair[1][1]}.csv")
         y = pd.read_csv(f"{datalocation}/{pair[1][2]}.csv")
 
-        x = x[pd.to_datetime(x[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
-        y = y[pd.to_datetime(y[time]).between(pd.to_datetime(start), pd.to_datetime(end))]
+        startIndex = x.index[pd.to_datetime(x[time]) == pd.to_datetime(start)].to_list()[0] - lookback
+        endIndex = x.index[pd.to_datetime(x[time]) == pd.to_datetime(start)].to_list()[0]
+
+        x = x[startIndex:endIndex+1]
+        y = y[startIndex:endIndex+1]
 
         x = x["Close"]
         y = y["Close"]
@@ -420,52 +275,92 @@ def get_txn_cost(buy, sell, quantity):
   gst = (brokerage+sebi_charge+txn_charges)*1.18
   return brokerage+stt+txn_charges+sebi_charge+stamp_charges+gst
 
-def backtest(lots, trades, intraday=False, n_bars=10, interval=Interval.in_daily, fut_contract=0, export=None):
+def get_lr_entries(symbols, dataLocation, lookback, start, end):
 
-    tv = TvDatafeed()
-    pnl = []
+    startIndex = pd.to_datetime(start)
+    endIndex = pd.to_datetime(end)
+    currentDate=startIndex
+    trades = []
 
-    for index, trade in trades.iterrows():
-        stockX = trade["Stock X"]
-        stockY = trade["Stock Y"]
-        df1 = tv.get_hist(symbol=stockX,exchange='NSE',interval=interval, n_bars=n_bars, fut_contract=fut_contract)
-        df2 = tv.get_hist(symbol=stockY,exchange='NSE',interval=interval, n_bars=n_bars, fut_contract=fut_contract)
-        if(intraday):
-          df1.index = pd.to_datetime(df1.index) + pd.Timedelta(hours=5, minutes=30)
-          df2.index = pd.to_datetime(df2.index) + pd.Timedelta(hours=5, minutes=30)
-        else:
-          dates=[]
-          for date in df1.index:
-            dates.append(str(date)[:11])
-          df1.index = pd.to_datetime(dates)
-          df2.index = pd.to_datetime(dates)
+    while(currentDate >= startIndex and currentDate <= endIndex):
+        pairs = get_lr_pairs(symbols, dataLocation, str(currentDate), lookback)
 
-        entryDate = pd.to_datetime(trade["entry"])
-        exitDate = pd.to_datetime(trade["exit"])
-        type = trade["type"]
-        lotX = get_lot_size(lots, stockX)
-        lotY = get_lot_size(lots, stockY)
-        if(type=="short"):
-            buyX = df1.loc[exitDate]["close"]
-            buyY = df2.loc[entryDate]["close"]
-            sellX = df1.loc[entryDate]["close"]
-            sellY = df2.loc[exitDate]["close"]
-            unrealized_pnl = (sellX-buyX)*lotX + (sellY-buyY)*lotY
-            realized_pnl = (sellX-buyX)*lotX + (sellY-buyY)*lotY - get_txn_cost(buyX, sellX, lotX) - get_txn_cost(buyY, sellY, lotY)
-            charges = unrealized_pnl-realized_pnl
-            pnl.append({"X":stockX, "Y":stockY, "Type": type,"entry":entryDate, "exit":exitDate, "Unrealized pnl":unrealized_pnl, "charges":charges, "realized_pnl":realized_pnl})
+        tracker = get_tracker(pairs, dataLocation, currentDate, lookback)
 
-        elif(type=="long"):
-            buyX = df1.loc[entryDate]["close"]
-            buyY = df2.loc[exitDate]["close"]
-            sellX = df1.loc[exitDate]["close"]
-            sellY = df2.loc[entryDate]["close"]
-            unrealized_pnl = (sellX-buyX)*lotX + (sellY-buyY)*lotY
-            realized_pnl = (sellX-buyX)*lotX + (sellY-buyY)*lotY - get_txn_cost(buyX, sellX, lotX) - get_txn_cost(buyY, sellY, lotY)
-            charges = unrealized_pnl-realized_pnl
-            pnl.append({"X":stockX, "Y":stockY, "Type": type, "entry":entryDate, "exit":exitDate, "Unrealized pnl":unrealized_pnl, "charges":charges, "realized_pnl":realized_pnl})
+        temp = get_lr_trades(tracker, currentDate)
 
-    pnl_df = pd.DataFrame(pnl)
-    if(export!=None):
-        pnl_df.to_excel(f"{export}", index=False)
-    return pnl_df
+        for trade in temp:
+            trades.append(trade)
+
+        currentDate = currentDate + timedelta(days=1)
+
+    return pd.DataFrame(trades, columns=["entry", "Stock X", "Stock Y", "type", "std_err"])
+
+def get_lr_pairs(symbols, dataLocation, startDate, lookback, time="Date"):
+
+    pairs = []
+    for row1 in symbols.iterrows():
+        for row2 in symbols.iterrows():
+            industry1 = row1[1][1]
+            industry2 = row2[1][1]
+            symbol1 = row1[1][2]
+            symbol2 = row2[1][2]
+
+            if(industry1 == industry2 and symbol1 != symbol2 and [symbol2, symbol1] not in pairs):
+                
+                try:
+                    xDf = pd.read_csv(f"{dataLocation}/{symbol1}.csv")
+                    yDf = pd.read_csv(f"{dataLocation}/{symbol2}.csv")
+                    
+                    startIndex = xDf.index[pd.to_datetime(xDf[time]) == pd.to_datetime(startDate)].to_list()[0] - lookback
+                    endIndex = xDf.index[pd.to_datetime(xDf[time]) == pd.to_datetime(startDate)].to_list()[0]
+
+                    x = xDf[startIndex:endIndex+1]
+                    y = yDf[startIndex:endIndex+1]
+
+                    # Extract the "Close" column
+                    x = x["Close"]
+                    y = y["Close"]
+
+                    ratio1, p_value1 = linearRegression(y, x)
+                    ratio2, p_value2 = linearRegression(x, y)
+
+                    if(ratio1<=ratio2):
+                        if(p_value1<0.05):
+                            pairs.append([industry1, symbol1, symbol2])
+
+                    elif(ratio2<ratio1):
+                        if(p_value2<0.05):
+                            pairs.append([industry2, symbol2, symbol1])
+
+                except Exception as e:
+                    if(e!=IndexError):
+                        print(f"{symbol1} - {symbol2} : {e}")
+    
+    pairs = pd.DataFrame(pairs, columns=["Industry", "X", "Y"])
+    pairs = pairs.drop_duplicates()
+
+    return pairs
+
+def get_lr_trades(tracker, date):
+
+    trades = []
+    for index, row in tracker.iterrows():
+        trade={}
+        if(tracker.iloc[index]["std_err"]<-2.5):
+            trade["entry"]=date
+            trade["Stock X"] = tracker.iloc[index]["X"]
+            trade["Stock Y"] = tracker.iloc[index]["Y"]
+            trade["type"]="long"
+            trade["std_err"]=tracker.iloc[index]["std_err"]
+            trades.append(trade)
+
+        if(tracker.iloc[index]["std_err"]>2.5):
+            trade["entry"]=date
+            trade["Stock X"] = tracker.iloc[index]["X"]
+            trade["Stock Y"] = tracker.iloc[index]["Y"]
+            trade["type"]="short"
+            trade["std_err"]=tracker.iloc[index]["std_err"]
+            trades.append(trade)
+
+    return trades

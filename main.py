@@ -4,11 +4,10 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# symbols = pd.read_csv("Symbols50.csv")
-# symbols = symbols["Symbol"]
-# uf.fetch_data("Historical Data", start="2023-12-01", end="2024-01-04", interval="15m", symbols=symbols)
-# symbols = pd.read_csv("symbols50.csv")
-# pairs = uf.get_LR_pairs(symbols, "Historical Data", start="01-12-2023", end="30-12-2023", time="Datetime", export="Intraday Pairs.csv")
-pairs = pd.read_csv("Intraday Pairs.csv")
-tracker = uf.get_tracker(pairs,"Historical Data",start="28-12-2023", end="03-01-2024", time="Datetime", export="Temp Tracker.xlsx")
-uf.get_LR_trades(pairs, start="2024-01-03 09:15:00", end="2024-01-03 15:15:00", lookback=125, datalocation="Historical Data", time="Datetime", export="Temp.csv")
+symbols = pd.read_csv("Symbols50.csv")
+uf.fetch_data("Historical Data", start="2022-01-01", end="2024-02-25", interval="1d", symbols=symbols["Symbol"])
+pairs = uf.get_lr_pairs(symbols, "Historical Data", "23-02-2024", 200)
+print(uf.get_tracker(pairs, "Historical Data", "2024-02-23", 200))
+# print(uf.temp_funct(symbols, "Historical Data", 200, start="2024-02-15", end="2024-02-22"))
+
+# uf.temp_lr_pairs(symbols, "Historical Data", "2024-01-01", 200)

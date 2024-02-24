@@ -49,26 +49,6 @@ for symbol in symbols:
 
 while(True):
     if(check_interval()):
-        for symbol in symbols:
-            try:
-                output = TA_Handler(
-                                symbol=symbol,
-                                screener="India",
-                                exchange="NSE",
-                                interval=Interval.INTERVAL_5_MINUTES
-                            )
-
-                indicators = output.get_indicators(["close", "EMA5", "VWAP"])
-                close=indicators["close"]
-                ema=indicators["EMA5"]
-                vwap=indicators["VWAP"]
-                data[symbol].append({"close":close, "ema":ema, "vwap":vwap})
-                print(f"Adding...........")
-
-            except Exception as e:
-                print(f"{symbol}: {e}")
-
-    elif(check_entry()):
         signals=[]
         for symbol in symbols:
             try:
@@ -83,14 +63,16 @@ while(True):
                 close=indicators["close"]
                 ema=indicators["EMA5"]
                 vwap=indicators["VWAP"]
-                print(f"Scanning...........")
                 if(len(data[symbol])>2):
-                    prevClose = data[symbol][-2]["close"]
-                    prevEma = data[symbol][-2]["ema"]
-                    prevVwap = data[symbol][-2]["vwap"]
+                    prevClose = data[symbol][-1]["close"]
+                    prevEma = data[symbol][-1]["ema"]
+                    prevVwap = data[symbol][-1]["vwap"]
                     if(prevEma<prevVwap and ema>vwap):
                         print(f"{symbol}: close={close}, ema={ema}, vwap={vwap}")
                         signals.append({"Time":datetime.datetime.now().time(),"Symbol":symbol, "Close":close, "EMA":ema, "VWAP":vwap})
+
+                data[symbol].append({"close":close, "ema":ema, "vwap":vwap})
+                print(f"Adding...........")
 
             except Exception as e:
                 print(f"{symbol}: {e}")
